@@ -223,9 +223,39 @@ class LatchDemo implements Runnable {
 ```
 
 #  实现 Callable 接口
+创建线程的第三种方式：实现 Callable 接口，这是一个带泛型的接口，实现这个接口的线程可以返回泛型参数的值并可以抛出异常。
 
+```java
+public class TestCallable {
+    public static void main(String[] args) {
+        ThreadDemo td = new ThreadDemo(); // 线程对象
+        FutureTask<Integer> result = new FutureTask<>(td); // 用于接收线程结果的对象
+        new Thread(result).start(); // 启动
+        try {
+            Integer sum = result.get(); //FutureTask没有获取到结果之前，线程进入阻塞状态，因此也可用于闭锁。
+            System.out.println(sum);
+            System.out.println("------------------------------------");
+        } catch (InterruptedException | ExecutionException e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+class ThreadDemo implements Callable<Integer> {
+    @Override
+    public Integer call() throws Exception {
+        int sum = 0;
+        for (int i = 0; i <= 100000; i++) {
+            sum += i;
+        }
+        return sum;
+    }
+}
+```
 
 #  Lock 同步锁
+
+
 #  Condition 控制线程通信
 #  线程按序交替
 #  ReadWriteLock 读写锁
