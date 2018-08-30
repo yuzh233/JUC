@@ -154,13 +154,13 @@ CAS 包含了 3 个操作数：
  
 多线程环境下，使用 HashMap 是线程不安全的。为了保证线程安全，我们可以通过使用Collectinos集合工具类中的synchronized方法来将非线程安全的容器类转为对应线程安全的容器类。其内部就是给每个方法加了一把synchronized锁。另外一种方式就是使用 HashMap 的线程安全类 Hashtable。
 
-Hashtable 采用了表锁机制，任何一个线程对容器访问其他线程会进入阻塞或轮询状态。由于Hashtable 为每个方法使用了同一把锁（每一个被synchronized修饰的方法都是使用的java内置锁，锁的是方法所属对象本身），一个线程获得了锁进入某个同步方法，其他线程都不能进入被该锁修饰的其他同步方法，除非锁被释放强到了锁。在并发编程中，极低的降低了效率。
+Hashtable 采用了表锁机制，任何一个线程对容器访问其他线程会进入阻塞或轮询状态。由于Hashtable 为每个方法使用了同一把锁（每一个被synchronized修饰的方法都是使用的java内置锁，锁的是方法所属对象本身），一个线程获得了锁进入某个同步方法，其他线程都不能进入被该锁修饰的其他同步方法，除非锁被释放抢到了锁。在并发编程中，极低的降低了效率。
 
 另外 Hashtable 这种表锁机制（每个同步方法使用同一把锁）在并发的复合操作中会产生异常。例如：在迭代操作中，线程1调用了同步的 hashNext() 方法发现有下一个元素准备调用同步的 next() 方法获取元素时，时间片被线程2抢夺过去将某个元素修改了，此时会抛出并发异常ConcurrentModificationException。多个同步方法组成的操作不是同步操作了。
 
 为了解决这种问题于是有了锁分段机制，这个机制将容器中的数据分为一段一段存储，为每一段加一把锁，不同的锁之间互不干扰，当一个线程占用其中一段数据的时候另一个线程可以访问另一段的数据。以此提高了并发效率。
 
-以下是并发容器类对应的未加同步的容器类：
+以下是常用并发容器类对应的未加同步的容器类：
 
 |并发容器类|非同步容器类|
 |-----|-----|
@@ -173,9 +173,58 @@ Hashtable 采用了表锁机制，任何一个线程对容器访问其他线程�
 当希望许多线程访问一个容器类的时候，ConcurrentHashMap 通常优于同步的 HashMap。ConcurrentSkipListMap 通常优于同步的TreeMap。当期望的读数和遍历远远大于列表的更新数时，CopyOnWriteArrayList 优于同步的 ArrayList。
 
 #  CountDownLatch 闭锁
+CountDownLatch 一个同步辅助类，在完成一组正在其他线程中执行的操作之前，它允许一个或多个线程一直等待。
 
+闭锁可以延迟线程的进度直到其到达终止状态，闭锁可以用来确保某些活动直到其他活动都完成才继续执行：
+
+- 确保某个计算在其需要的所有资源都被初始化之后才继续执行;
+- 确保某个服务在其依赖的所有其他服务都已经启动之后才启动;
+- 等待直到某个操作所有参与者都准备就绪再继续执行
+
+一个简单的用例，统计所有线程执行某个同步操作的总计时间。主线程需要在其他线程执行完毕之前等待，直至闭锁计数器为0解除等待状态。
+```java
+public class TestCountDownLatch {
+    public static void main(String[] args) {
+        final CountDownLatch latch = new CountDownLatch(50); // 创建一个闭锁对象
+        LatchDemo ld = new LatchDemo(latch);
+        long start = System.currentTimeMillis();
+        for (int i = 0; i < 50; i++) {
+            new Thread(ld).start(); // 每一个线程执行一次运算
+        }
+        try {
+            latch.await(); // 主线程进入等待，直至闭锁计算器为0，解除等待状态。
+        } catch (InterruptedException e) {
+        }
+        long end = System.currentTimeMillis();
+        System.out.println("耗费时间为：" + (end - start)); // 其他线程都执行完毕统计所有线程执行的总时间
+    }
+}
+
+class LatchDemo implements Runnable {
+    private CountDownLatch latch; // 维护一个闭锁对象
+
+    public LatchDemo(CountDownLatch latch) {
+        this.latch = latch;
+    }
+
+    @Override
+    public void run() {
+        try {
+            for (int i = 0; i < 50000; i++) {
+                if (i % 2 == 0) {
+                    System.out.println(i);
+                }
+            }
+        } finally {
+            latch.countDown(); // 每个线程执行完毕计数器-1
+        }
+    }
+}
+```
 
 #  实现 Callable 接口
+
+
 #  Lock 同步锁
 #  Condition 控制线程通信
 #  线程按序交替
