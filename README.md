@@ -293,7 +293,252 @@ class Ticket implements Runnable {
 ```
 
 #  Condition 控制线程通信
+首先回顾一下生产者消费者模型，直接上代码：
+```java
+public class TestProducerAndConsumer {
+    public static void main(String[] args) {
+        Clerk clerk = new Clerk();
 
+        Producer producer = new Producer();
+        producer.setClerk(clerk);
+        Consumer consumer = new Consumer();
+        consumer.setClerk(clerk);
+
+        new Thread(producer,"生产者A：").start();
+        new Thread(consumer,"消费者B：").start();
+    }
+}
+
+// 店员（维护共享资源——产品，生产和消费）
+@Data
+class Clerk {
+    private int product;
+
+    public synchronized void production(){
+        if (product >= 10) {
+            System.out.println("已满！");
+            try {
+                this.wait();
+            } catch (InterruptedException e) {
+            }
+        } else {
+            System.out.println(Thread.currentThread().getName()+"生产了：" + ++product);
+            this.notifyAll();
+        }
+    }
+
+    public synchronized void consumption(){
+        if (product <= 0) {
+            System.out.println("缺货！");
+            try {
+                this.wait();
+            } catch (InterruptedException e) {
+            }
+        } else {
+            System.out.println(Thread.currentThread().getName()+"消费了：" + product--);
+            this.notifyAll();
+        }
+    }
+}
+
+// 生产者
+@Data
+class Producer implements Runnable{
+    private Clerk clerk;
+
+    @Override
+    public void run() {
+        for (int i = 0; i < 20; i++){
+            clerk.production();
+        }
+    }
+}
+
+// 消费者
+@Data
+class Consumer implements Runnable{
+    private Clerk clerk;
+
+    @Override
+    public void run() {
+        for (int i = 0; i < 20; i++){
+            clerk.consumption();
+        }
+    }
+}
+```
+运行结果部分截图：
+![Alt text](/img/3.jpg)
+
+以上结果看似交替有序的执行，但是存在一个潜在的问题。当我们将仓库容量设为1，库存有了一个产品就满了，生产者挂起，通知消费者运行。
+
+    if (product >= 1) {
+        System.out.println("已满！");
+        try {
+            this.wait();
+        } catch (InterruptedException e) {
+        }
+    } else {
+        System.out.println(Thread.currentThread().getName()+"生产了：" + ++product);
+        this.notifyAll();
+    }
+
+再让生产者每次生产之前睡一秒：
+
+    for (int i = 0; i < 20; i++){
+        try {
+            Thread.sleep(200);
+        } catch (InterruptedException e) {
+        }
+        clerk.production();
+    }
+
+看看运行情况... 发现程序没有正常停止
+
+![Alt text](/img/4.jpg)
+
+为什么会出现这种情况呢？首先：生产者每次生产之前都会睡上一秒，这就意味着时间片总是被消费者先抢去了，每次都是消费者没货了进入阻塞状态之后生产者才慢吞吞的抢到了时间片进行生产。
+
+再看一次消费者的代码：
+
+    public synchronized void consumption() { 
+        if (product <= 0) {
+            System.out.println("缺货！");
+            try {
+                this.wait();
+            } catch (InterruptedException e) {
+            }
+        } else {
+            System.out.println(Thread.currentThread().getName() + "消费了：" + product--);
+            this.notifyAll();
+        }
+    }
+
+注意：这个 `else` 是问题的关键点。
+
+- 生产者消费者同时开抢，由于生产者0要睡上一会，于是毫不意外的被消费者0抢到时间片，进入`缺货分支`里面陷入了`等待状态`，此时生产者0 睡完1秒生产了一个产品，唤醒所有线程。消费者0由于已经在消费的同步代码块里面所以继续执行退出了本次循环，该消费者0没有消费产品。
+
+- 接着，生产者1和消费者1抢时间片，生产者每次都要睡觉怎么抢的过消费者，于是消费者1抢到了，发现有货！通知所有线程，消费者2又抢到了时间，发现没货，此时生产1才“被迫”拿到时间片生产一个产品，通知所有线程。由于生产者每次都要等待所以每次都被消费者抢到时间，消费者2执行完毕。消费者2没有消费就结束。
+
+- 生产者2与消费者3开抢，消费者3胜。有货！消费完毕通知所有线程，消费者4又抢到了，没货。此时生产者2又“被迫”生产了一个，通知所有线程...
+
+- 好吧，消费者5抢到了，消费完美滋滋。消费者6又来了，缺货！生产者3“被迫”生产......
+
+- 每次都是消费者抢到CPU时间片执行权，而生产者每次都是在消费者没货时等待状态下才有机会执行，而由于存在else分支导致有些消费者并没有消费产品就结束了。
+
+- 最后的结果是消费者早早的遍历完20次，而生产者迟迟没有遍历完20次，慢慢吞吞的...
+
+- **最关键的：** 由于消费者早就消费完了，生产者生产了一个唤醒所有，只有自己被唤醒没人和它抢，就又进入了生产者方法，发现库存满了！于是乎，等待其他线程唤醒自己，然而没有其他线程了，就没人唤醒自己了...
+
+解决办法：去掉else分支
+
+    public synchronized void production() { 
+        if (product >= 1) {
+            System.out.println("已满！");
+            try {
+                this.wait();
+            } catch (InterruptedException e) {
+            }
+        }
+        System.out.println(Thread.currentThread().getName() + "生产了：" + ++product);
+        this.notifyAll();
+    }
+
+    public synchronized void consumption() { 
+        if (product <= 0) {
+            System.out.println("缺货！");
+            try {
+                this.wait();
+            } catch (InterruptedException e) {
+            }
+        }
+        System.out.println(Thread.currentThread().getName() + "消费了：" + product--);
+        this.notifyAll();
+    }
+
+这样保证了每次消费者都能消费到产品，然而只有一个消费者和一个生产者的情况下是没问题的，当分别有两个呢？
+
+![Alt text](/img/5.jpg)
+
+乱套了... 这个稍微想想很好理解，比如刚开始第一个消费者线程抢到了时间进入缺货分支陷入等待，于是生产者生产了一个，开始抢夺时间，假如此时被第二个消费者线程抢到时间进入了消费代码块，但是第一个消费线程已经进入了它就会继续执行完毕，于是乎两个消费者线程消费了同一份产品。
+
+这就是 **虚假唤醒** ，那么怎么解决呢？真是令人头大...
+
+其实也很简单，将生产消费的同步代码块中由 if 改为 while就行了。
+
+    public synchronized void production() {
+        while (product >= 1) {
+            System.out.println("已满！");
+            try {
+                this.wait();
+            } catch (InterruptedException e) {
+            }
+        }
+        System.out.println(Thread.currentThread().getName() + "生产了：" + ++product);
+        this.notifyAll();
+    }
+
+    public synchronized void consumption() {
+        while (product <= 0) {
+            System.out.println("缺货！");
+            try {
+                this.wait();
+            } catch (InterruptedException e) {
+            }
+        }
+        System.out.println(Thread.currentThread().getName() + "消费了：" + product--);
+        this.notifyAll();
+    }
+
+一次等待之后，当要继续执行下面的代码，再次判断一次是否有货，有才消费，没有就继续等待。
+
+至此，线程间通信的潜在问题及虚假唤醒问题完美解决了。
+
+接下来就是通过使用Lock锁取代Synchronized锁，而Condiction则是对线程通信进行控制的条件变量的对象。
+
+> Condition 接口描述了可能会与锁有关联的条件变量。这些变量在用法上与使用 Object.wait 访问的隐式监视器类似，但提供了更强大的功能。需要特别指出的是，单个 Lock 可能与多个 Condition 对象关联。为了避免兼容性问题，Condition 方法的名称与对应的 Object 版本中的不同。在 Condition 对象中，与 wait、notify和notifyAll 方法对应的分别是await、signal 和 signalAll。Condition 实例实质上被绑定到一个锁上。要为特定 Lock 实例获得Condition 实例，请使用其 newCondition() 方法。
+
+```java
+class Clerk1 {
+    private int product;
+    private Lock lock = new ReentrantLock(); // 加 Lock 锁
+    Condition condition = lock.newCondition(); // 通过 lock 获得锁关联变量对象
+
+    public void production() {
+        lock.lock();
+        try {
+            while (product >= 1) {
+                System.out.println("已满！");
+                try {
+                    condition.await();
+                } catch (InterruptedException e) {
+                }
+            }
+            System.out.println(Thread.currentThread().getName() + "生产了：" + ++product);
+            condition.signalAll();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void consumption() {
+        lock.lock();
+        try {
+            while (product <= 0) {
+                System.out.println("缺货！");
+                try {
+                    condition.await();
+                } catch (InterruptedException e) {
+                }
+            }
+            System.out.println(Thread.currentThread().getName() + "消费了：" + product--);
+            condition.signalAll();
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+```
 
 #  线程按序交替
 #  ReadWriteLock 读写锁
