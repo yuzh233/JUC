@@ -497,7 +497,6 @@ class Consumer implements Runnable{
 接下来就是通过使用Lock锁取代Synchronized锁，而Condiction则是对线程通信进行控制的条件变量的对象。
 
 > Condition 接口描述了可能会与锁有关联的条件变量。这些变量在用法上与使用 Object.wait 访问的隐式监视器类似，但提供了更强大的功能。需要特别指出的是，单个 Lock 可能与多个 Condition 对象关联。为了避免兼容性问题，Condition 方法的名称与对应的 Object 版本中的不同。在 Condition 对象中，与 wait、notify和notifyAll 方法对应的分别是await、signal 和 signalAll。Condition 实例实质上被绑定到一个锁上。要为特定 Lock 实例获得Condition 实例，请使用其 newCondition() 方法。
-
 ```java
 class Clerk1 {
     private int product;
@@ -541,8 +540,538 @@ class Clerk1 {
 ```
 
 #  线程按序交替
+ 编写一个程序，开启 3 个线程，这三个线程的 ID 分别为A、B、C，每个线程将自己的 ID 在屏幕上打印 10 遍，要求输出的结果必须按顺序显示。如：ABCABCABC…… 依次递归
+```java
+public class TestABCAlternate {
+    public static void main(String[] args) {
+        ABCAlternate alternate = new ABCAlternate();
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                for (int i = 0; i < 10; i++) {
+                    alternate.printA();
+                }
+            }
+        },"A").start();
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                for (int i = 0; i < 10; i++) {
+                    alternate.printB();
+                }
+            }
+        },"B").start();
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                for (int i = 0; i < 10; i++) {
+                    alternate.printC();
+                }
+            }
+        },"C").start();
+    }
+}
+
+class ABCAlternate {
+    private int num = 1;
+    Lock lock = new ReentrantLock();
+    Condition con1 = lock.newCondition();
+    Condition con2 = lock.newCondition();
+    Condition con3 = lock.newCondition();
+
+    public void printA() {
+        lock.lock();
+        try {
+            if (num != 1) {
+                try {
+                    con1.await();
+                } catch (InterruptedException e) {
+                }
+            }
+            System.out.print(Thread.currentThread().getName());
+            num = 2;
+            con2.signal();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void printB() {
+        lock.lock();
+        try {
+            if (num != 2) {
+                try {
+                    con2.await();
+                } catch (InterruptedException e) {
+                }
+            }
+            System.out.print(Thread.currentThread().getName());
+            num = 3;
+            con3.signal();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void printC() {
+        lock.lock();
+        try {
+            if (num != 3) {
+                try {
+                    con3.await();
+                } catch (InterruptedException e) {
+                }
+            }
+            System.out.print(Thread.currentThread().getName());
+            num = 1;
+            con1.signal();
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+```
+
 #  ReadWriteLock 读写锁
+ReadWriteLock 维护了一对相关的锁，一个用于只读操作，另一个用于写入操作。只要没有 writer，读取锁可以由多个 reader 线程同时保持。写入锁是独占的。
+
+ReadWriteLock 读取操作通常不会改变共享资源，但执行写入操作时，必须独占方式来获取锁。对于读取操作占多数的数据结构。 ReadWriteLock 能提供比独占锁更高的并发性。而对于只读的数据结构，其中包含的不变性可以完全不需要考虑加锁操作
+
+用例：
+```java
+public class TestReadWriterLock {
+    public static void main(String[] args) {
+        ReadWriterLock rwLock = new ReadWriterLock();
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                for (int i = 0; i < 100; i++) {
+                    rwLock.read();
+                }
+            }
+        }, "ReadLock:").start();
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                rwLock.writer(233);
+            }
+        }, "WriterLock:").start();
+    }
+}
+
+class ReadWriterLock {
+    private int resource;
+    private ReadWriteLock rwLock = new ReentrantReadWriteLock();
+
+    public void read() {
+        try {
+            rwLock.readLock().lock();
+            System.out.println(Thread.currentThread().getName() + resource);
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
+    public void writer(int n) {
+        try {
+            rwLock.writeLock().lock();
+            resource = n;
+            System.out.println(Thread.currentThread().getName() + resource);
+        } finally {
+            rwLock.writeLock().unlock();
+        }
+    }
+}
+```
+运行结果部分截图：![Alt text](/img/6.jpg)
+
 #  线程八锁
+线程八锁，实际上是多线程编程中经常遇到的八种情况。通过八种场景学习总结线程锁的特性。
+
+场景一：两个普通同步方法，两个线程，是同一把锁（this锁），存在互斥关系。
+```java
+public class TestThread8Monitor {
+    public static void main(String[] args) {
+        Number number = new Number();
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                number.one();
+            }
+        }).start();
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                number.two();
+            }
+        }).start();
+    }
+}
+
+class Number {
+
+    public synchronized void one() {
+        System.out.println("one");
+    }
+
+    public synchronized void two() {
+        System.out.println("two");
+    }
+}
+```
+运行结果：
+
+    one
+    two
+
+
+场景二：让同步方法 one() 睡3秒，观察结果。**同一把锁，存在互斥关系，一个同步方法没有释放锁其他所有同步方法阻塞。**
+
+    public synchronized void one() {
+        try {
+            Thread.sleep(3000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        System.out.println("one");
+    }
+
+运行结果：
+
+    one
+    two
+
+场景三：新增一个同步方法 three()，三个同步方法，三个线程，一个线程对象，竞争打印。
+
+    public synchronized void one() {
+        System.out.println("one");
+    }
+
+    public synchronized void two() {
+        System.out.println("two");
+    }
+
+    public synchronized void three() {
+        System.out.println("three");
+    }
+
+运行结果：
+
+    one
+    three
+    two
+
+场景四：新增一个 Number 对象。两个线程对象，两个同步方法。**不同锁之间（两个this不是同一个this）的同步方法不存在互斥。**
+
+    public static void main(String[] args) {
+        Number number = new Number();
+        Number number2 = new Number();
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                number.one();
+            }
+        }).start();
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                number2.two();
+            }
+        }).start();
+    }
+
+两个同步方法：
+
+    public synchronized void one() {
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        System.out.println("one");
+    }
+
+    public synchronized void two() {
+        System.out.println("two");
+    }
+
+运行结果：
+
+    two
+    one
+
+场景五：同一个线程对象，一个静态同步方法，一个非静态同步方法。**不同锁之间的同步方法不存在互斥。**
+
+    public static synchronized void one() {
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        System.out.println("one");
+    }
+
+    public synchronized void two() {
+        System.out.println("two");
+    }
+
+运行结果：
+
+    two
+    one
+
+场景六：同一个线程对象，两个静态同步方法，是相同的锁（Class锁），存在互斥。
+
+    public static synchronized void one() {
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        System.out.println("one");
+    }
+
+    public static synchronized void two() {
+        System.out.println("two");
+    }
+
+  运行结果：
+
+    one 
+    two
+
+场景七：新增一个线程对象。两个线程对象，两个静态同步方法。**同一把锁存在互斥性。**
+
+    public static void main(String[] args) {
+        Number number = new Number();
+        Number number2 = new Number();
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                number.one();
+            }
+        }).start();
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                number2.two();
+            }
+        }).start();
+    }
+
+静态同步方法： 
+
+    public static synchronized void one() {
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        System.out.println("one");
+    }
+
+    public static synchronized void two() {
+        System.out.println("two");
+    }
+
+运行结果：
+
+    one 
+    two
+
+场景八：新增一个线程对象。两个线程对象，一个静态同步方法，一个非静态同步方法。**非同一把锁不存在竞争**
+
+    public static synchronized void one() {
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        System.out.println("one");
+    }
+
+    public synchronized void two() {
+        System.out.println("two");
+    }
+
+运行结果：
+
+    two 
+    one 
+
+结论：
+
+- 静态同步方法的锁是 Class 锁，非静态同步方法的锁是 this 锁，不同的对象是不同的 this 锁。
+- 某一个时刻内，只能有一个线程持有锁，无论几个方法。相同的锁，一个线程获得锁，其他线程都得等待。
+
 #  线程池
+创建线程的第四种方式，线程池：提供了一个线程队列，队列中保存着所有等待状态的线程。避免了创建与销毁额外开销，提高了响应的速度。
+
+线程池的体系结构：
+
+    java.util.concurrent.Executor : 负责线程的使用与调度的根接口
+  		|--**ExecutorService 子接口: 线程池的主要接口
+  			|--ThreadPoolExecutor 线程池的实现类
+  			|--ScheduledExecutorService 子接口：负责线程的调度
+  				|--ScheduledThreadPoolExecutor ：继承ThreadPoolExecutor，实现ScheduledExecutorService
+
+ThreadPoolExecutor和ScheduledThreadPoolExecutor可以创建连接池对象，但是使用工厂获得对象是最好的方式。工具类 Executors 的常用API及描述：
+
+|方法|描述|
+|-----|-----|
+|ExecutorService newFixedThreadPool() | 创建固定大小的线程池|
+|ExecutorService newCachedThreadPool() | 缓存线程池，线程池的数量不固定，可以根据需求自动的更改数量，可以自动进行线程回收|
+|ExecutorService newSingleThreadExecutor() | 创建单个线程池。线程池中只有一个线程|
+|ScheduledExecutorService newScheduledThreadPool() | 创建固定大小的线程，可以延迟或定时的执行任务|
+
+用例说明：
+```java
+public class TestThreadPool {
+    public static void main(String[] args) throws Exception {
+        //创建线程池
+        ExecutorService pool = Executors.newFixedThreadPool(5);
+        ThreadPoolDemo tpd = new ThreadPoolDemo();
+        //5个线程执行10个任务，某些线程会被回收
+        for (int i = 0; i < 10; i++) {
+            pool.submit(tpd); // 可传 Callable 和 Runnable接口作为任务对象
+        }
+        //关闭线程池
+        pool.shutdown();
+
+        /** 以 Callable 作为任务 **/
+        List<Future<Integer>> list = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            Future<Integer> future = pool.submit(new Callable<Integer>() {
+                @Override
+                public Integer call() throws Exception {
+                    int sum = 0;
+                    for (int i = 0; i <= 100; i++) {
+                        sum += i;
+                    }
+                    return sum;
+                }
+            });
+            list.add(future);
+        }
+        pool.shutdown();
+        for (Future<Integer> future : list) {
+            System.out.println(future.get());
+        }
+    }
+}
+
+class ThreadPoolDemo implements Runnable {
+    private int i = 0;
+
+    @Override
+    public void run() {
+        while (i <= 100) {
+            System.out.println(Thread.currentThread().getName() + " : " + i++);
+        }
+    }
+}
+```
+
 #  线程调度
+一个 ExecutorService，可安排在给定的延迟后运行或定期执行的命令。
+```java
+public class TestScheduledThreadPool {
+    public static void main(String[] args) throws ExecutionException, InterruptedException {
+        // 线程池的任务调度
+        ScheduledExecutorService pool = Executors.newScheduledThreadPool(5);
+        // 十个任务
+        for (int i = 0; i < 5; i++) {
+            /**
+             * 参数一：任务
+             * 参数二：延迟时间
+             * 参数一：时间单位
+             */
+            ScheduledFuture<Integer> future = pool.schedule(new Callable<Integer>() {
+                @Override
+                public Integer call() throws Exception {
+                    int num = new Random().nextInt(100);
+                    return num;
+                }
+            }, 1, TimeUnit.SECONDS);
+            System.out.println(future.get());
+        }
+        // 关闭线程池
+        pool.shutdown();
+    }
+}
+
+```
+
 #  ForkJoinPool 分支/合并框架 工作窃取
+Fork/Join 框架：就是在必要的情况下，将一个大任务，进行拆分(fork)成若干个小任务（拆到不可再拆时），再将一个个的小任务运算的结果进行 join 汇总。
+
+前面学过 [归并排序](https://github.com/yuzh233/Algorithms#%E5%BD%92%E5%B9%B6%E6%8E%92%E5%BA%8F)，实际上这种思想和归并排序是一样的。
+
+![Alt text](/img/7.jpg)
+
+采用 “工作窃取”模式（work-stealing）：当执行新的任务时它可以将其拆分分成更小的任务执行，并将小任务加到线程队列中，然后再从一个随机线程的队列中偷一个并把它放在自己的队列中。
+
+相对于一般的线程池实现，fork/join框架的优势体现在对其中包含的任务的处理方式上.在一般的线程池中，如果一个线程正在执行的任务由于某些原因无法继续运行，那么该线程会处于等待状态。而在fork/join框架实现中，如果某个子问题由于等待另外一个子问题的完成而无法继续运行。那么处理该子问题的线程会主动寻找其他尚未运行的子问题来执行.这种方式减少了线程的等待时间，提高了性能。
+
+模拟拆分：
+```java
+public class TestForkJoinPool {
+    public static void main(String[] args) {
+        // 创建fork/join对象
+        ForkJoinPool pool = new ForkJoinPool();
+        // 创建任务对象
+        ForkJoinTask<Long> task = new ForkJoinSumCalculate(0L, 100000000L);
+        // 执行任务
+        Long sum = pool.invoke(task);
+        System.out.println(sum);
+    }
+}
+
+// 创建自己的fork/join任务，计算从start开始end个数的和。需要继承递归任务类。
+class ForkJoinSumCalculate extends RecursiveTask<Long> {
+    private long start;
+    private long end;
+
+    /**
+     * 拆分临界值：定义子任务（子线程队列）到多大时不再拆分，开始计算每个子任务的值。
+     * - 如果临界值 = 任务总大小，就不会拆分，直接循环计算所有值。
+     * - 如果临界值 = 1L，就拆到每个子线程队列大小为1时停止拆分
+     */
+    private static final long THURSHOLD = 10000L;
+
+    public ForkJoinSumCalculate(long start, long end) {
+        this.start = start;
+        this.end = end;
+    }
+
+    @Override
+    protected Long compute() {
+        long len = end - start;
+        if (len <= THURSHOLD) {
+            long sum = 0L;
+            for (long i = start; i <= end; i++) {
+                sum += i;
+            }
+            return sum;
+        } else {
+            long mid = (end + start) / 2;
+            ForkJoinSumCalculate left = new ForkJoinSumCalculate(start, mid);
+            left.fork();
+            ForkJoinSumCalculate right = new ForkJoinSumCalculate(mid + 1, end);
+            right.fork();
+            return left.join() + right.join();
+        }
+    }
+}
+```
